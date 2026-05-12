@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<title>II/603 Sulice – Želivec · TDS / objednatel</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#1a1a2e; --panel:#16213e; --panel2:#0f3460;
+  --accent:#e94560; --accent2:#f5a623;
+  --text:#eaeaea; --text2:#a0aec0;
+  --green:#48bb78; --border:rgba(255,255,255,0.08); --radius:12px;
+}
+html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; }
+body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; height:100vh; overflow:hidden; display:flex; flex-direction:column; }
+
+#header { background:var(--panel); border-bottom:1px solid var(--border); padding:10px 14px; display:flex; align-items:center; gap:10px; z-index:1000; flex-shrink:0; }
+#header h1 { font-size:14px; font-weight:700; flex:1; line-height:1.2; }
+#header h1 span { color:var(--accent); }
+#header h1 small { display:block; font-size:10px; font-weight:500; color:var(--text2); margin-top:2px; }
+#km-display { background:var(--panel2); border:1px solid var(--accent); border-radius:8px; padding:4px 10px; font-size:13px; font-weight:700; color:var(--accent2); min-width:90px; text-align:center; }
+#so-display { background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:4px 8px; font-size:11px; font-weight:700; color:var(--text2); min-width:60px; text-align:center; }
+#btn-layers { background:var(--panel2); border:1px solid var(--border); border-radius:8px; color:var(--text); padding:6px 10px; font-size:13px; cursor:pointer; white-space:nowrap; }
+
+#map { flex:1; width:100%; z-index:1; }
+
+#layers-panel { position:fixed; top:62px; right:0; width:260px; max-height:calc(100vh - 80px); overflow-y:auto; background:var(--panel); border-left:1px solid var(--border); border-bottom:1px solid var(--border); border-radius:0 0 0 var(--radius); z-index:2000; display:none; padding:12px; -webkit-overflow-scrolling:touch; }
+#layers-panel.open { display:block; }
+#layers-panel h3 { font-size:11px; text-transform:uppercase; letter-spacing:1px; color:var(--text2); margin-bottom:8px; margin-top:10px; }
+#layers-panel h3:first-child { margin-top:0; }
+.layer-row { display:flex; align-items:center; justify-content:space-between; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
+.layer-row:last-child { border-bottom:none; }
+#basemap-row { display:flex; gap:5px; margin-bottom:4px; }
+.bm-btn { flex:1; background:var(--panel2); border:1px solid var(--border); border-radius:6px; color:var(--text2); font-size:10px; padding:5px 2px; cursor:pointer; text-align:center; transition:all .15s; }
+.bm-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(233,69,96,0.1); }
+.toggle { position:relative; width:38px; height:20px; flex-shrink:0; }
+.toggle input { opacity:0; width:0; height:0; }
+.toggle-slider { position:absolute; inset:0; background:#333; border-radius:20px; transition:.2s; cursor:pointer; }
+.toggle-slider:before { content:''; position:absolute; width:14px; height:14px; left:3px; top:3px; background:white; border-radius:50%; transition:.2s; }
+.toggle input:checked + .toggle-slider { background:var(--accent); }
+.toggle input:checked + .toggle-slider:before { transform:translateX(18px); }
+
+#btn-gps { position:fixed; bottom:24px; right:16px; width:52px; height:52px; border-radius:50%; background:var(--panel2); border:2px solid var(--border); color:var(--text); font-size:22px; cursor:pointer; z-index:1500; display:flex; align-items:center; justify-content:center; box-shadow:0 4px 16px rgba(0,0,0,.4); transition:all .2s; }
+#btn-gps.active { border-color:var(--green); color:var(--green); box-shadow:0 0 16px rgba(72,187,120,.4); }
+
+#toast { position:fixed; bottom:90px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:8px 16px; font-size:13px; z-index:3000; opacity:0; transition:all .3s; white-space:nowrap; pointer-events:none; max-width:90vw; }
+#toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* ══ STANIČENÍ - jednoduchý popisek u trasy ══ */
+.staniceni { background:transparent !important; border:none !important; overflow:visible !important; }
+.st-wrap { display:flex; flex-direction:column; align-items:flex-end; cursor:pointer; user-select:none; }
+.st-label { color:#f5a623; font-size:22px; font-weight:900; white-space:nowrap; line-height:1;
+  text-shadow:-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 0 8px #000; transition:color .15s; }
+.st-line { width:2px; height:14px; background:#f5a623; margin-top:3px; flex-shrink:0; box-shadow:0 0 4px #000; }
+.st-wrap:hover .st-label { color:#ffd166; }
+
+/* GPS marker */
+.gps-wrap { position:relative; width:18px; height:18px; }
+.gps-dot-inner { width:18px; height:18px; background:var(--green); border-radius:50%; border:3px solid white; box-sizing:border-box; }
+@keyframes pulse-gps {
+  0%   { box-shadow:0 0 0 0   rgba(72,187,120,.6); }
+  70%  { box-shadow:0 0 0 14px rgba(72,187,120,0); }
+  100% { box-shadow:0 0 0 0   rgba(72,187,120,0); }
+}
+.gps-dot-inner { animation:pulse-gps 2s infinite; }
+
+/* Propustek pin */
+.prop-marker { background:transparent !important; border:none !important; overflow:visible !important; }
+.prop-pin {
+  width:32px; height:32px; background:#1565c0; border:3px solid #fff;
+  border-radius:50%; display:flex; align-items:center; justify-content:center;
+  color:#fff; font-size:11px; font-weight:800;
+  box-shadow:0 2px 6px rgba(0,0,0,.5); cursor:pointer; transition:transform .15s;
+}
+.prop-pin:hover { transform:scale(1.15); }
+
+/* SO popisek na mapě */
+.so-inline-label { background:transparent !important; border:none !important; overflow:visible !important; }
+
+/* Popup */
+.leaflet-popup-content-wrapper { background:var(--panel2) !important; color:var(--text) !important; border:1px solid var(--border) !important; border-radius:var(--radius) !important; }
+.leaflet-popup-tip { background:var(--panel2) !important; }
+.leaflet-popup-content { font-size:13px; line-height:1.6; margin:10px 14px; }
+.leaflet-popup-content b { color:var(--accent2); }
+
+/* Legenda SO */
+#legend { position:fixed; bottom:24px; left:16px; background:rgba(15,52,96,0.92); border:1px solid var(--border);
+  border-radius:10px; padding:8px 10px; font-size:11px; z-index:1400; max-width:200px;
+  box-shadow:0 4px 12px rgba(0,0,0,.4); display:none; }
+#legend.open { display:block; }
+#legend h4 { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--text2); margin-bottom:6px; }
+.lg-row { display:flex; align-items:center; gap:6px; padding:2px 0; }
+.lg-sw { width:18px; height:5px; border-radius:2px; flex-shrink:0; }
+.lg-lbl { font-size:11px; color:var(--text); }
+#btn-legend { position:fixed; bottom:24px; left:16px; width:42px; height:42px; border-radius:50%; background:var(--panel2);
+  border:2px solid var(--border); color:var(--text); font-size:18px; cursor:pointer; z-index:1450; display:flex;
+  align-items:center; justify-content:center; box-shadow:0 4px 12px rgba(0,0,0,.4); }
+#btn-legend.hidden { display:none; }
+#btn-legend-close { background:none; border:none; color:var(--text2); font-size:18px; cursor:pointer; float:right;
+  margin-top:-4px; margin-right:-4px; line-height:1; padding:2px 6px; }
+
+.so-tooltip { background:rgba(15,52,96,0.95) !important; color:#eaeaea !important;
+  border:1px solid #94a3b8 !important; border-radius:6px !important;
+  font-size:12px !important; line-height:1.5 !important; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <h1>II/603 Sulice – <span>Želivec</span><small>TDS / objednatel · rekonstrukce silnice a mostů</small></h1>
+  <div id="so-display" title="Aktuální stavební objekt">SO –</div>
+  <div id="km-display" title="Aktuální staničení">km –</div>
+  <button id="btn-layers">☰ Vrstvy</button>
+</div>
+
+<div id="map"></div>
+
+<div id="layers-panel">
+  <h3>Podkladová mapa</h3>
+  <div id="basemap-row">
+    <button class="bm-btn" data-bm="outdoor">Outdoor</button>
+    <button class="bm-btn" data-bm="basic">Basic</button>
+    <button class="bm-btn" data-bm="aerial">Letecká</button>
+    <button class="bm-btn active" data-bm="osm">OSM</button>
+  </div>
+  <h3>Vrstvy</h3>
+  <div class="layer-row"><label>📍 GPS poloha</label>
+    <div class="toggle"><input type="checkbox" id="lyr-gps"><span class="toggle-slider" data-for="lyr-gps"></span></div>
+  </div>
+  <div class="layer-row"><label>🛣️ Trasa silnice</label>
+    <div class="toggle"><input type="checkbox" id="lyr-trasa" checked><span class="toggle-slider" data-for="lyr-trasa"></span></div>
+  </div>
+  <div class="layer-row"><label>📏 Staničení (po 100 m)</label>
+    <div class="toggle"><input type="checkbox" id="lyr-st" checked><span class="toggle-slider" data-for="lyr-st"></span></div>
+  </div>
+  <div class="layer-row"><label>🏗️ Stavební objekty</label>
+    <div class="toggle"><input type="checkbox" id="lyr-so" checked><span class="toggle-slider" data-for="lyr-so"></span></div>
+  </div>
+  <div class="layer-row"><label>🔵 Propustky (P1, P2)</label>
+    <div class="toggle"><input type="checkbox" id="lyr-prop" checked><span class="toggle-slider" data-for="lyr-prop"></span></div>
+  </div>
+  <h3>Zobrazení</h3>
+  <div class="layer-row"><label>📜 Legenda SO</label>
+    <div class="toggle"><input type="checkbox" id="lyr-legend" checked><span class="toggle-slider" data-for="lyr-legend"></span></div>
+  </div>
+</div>
+
+<button id="btn-gps" title="GPS poloha">📍</button>
+<button id="btn-legend" title="Zobrazit legendu" style="display:none;">📜</button>
+
+<div id="legend">
+  <button id="btn-legend-close" title="Skrýt legendu">×</button>
+  <h4>Stavební objekty</h4>
+  <div id="legend-rows"></div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ──────────────────────────────────────────────────────────
+//  KONFIGURACE
+// ──────────────────────────────────────────────────────────
+var MAPY_API_KEY = 'n4vDG-d4mkhllq8P_9783hgyMtm9U6RU6WwwGvvpvuY';
+var KM_START = 0.000;
+var KM_END   = 4.605;
+
+// ── BODY OSY TRASY (GPX z mapy.cz, ZÚ Hlubočinka → KÚ Kamenice) ──
+var GPX_POINTS = [
+  [49.935204,14.557546],[49.934460,14.558538],[49.933550,14.559772],
+  [49.932686,14.560963],[49.932030,14.561886],[49.931217,14.562980],
+  [49.930490,14.564005],[49.929560,14.565223],[49.928730,14.566377],
+  [49.928024,14.567321],[49.927616,14.567879],[49.926804,14.568974],
+  [49.926030,14.570004],[49.925518,14.570862],[49.924946,14.571859],
+  [49.924088,14.573426],[49.923160,14.575174],[49.922367,14.576698],
+  [49.921913,14.577632],[49.921387,14.578672],[49.920746,14.579938],
+  [49.920440,14.580485],[49.920040,14.580894],[49.919598,14.581140],
+  [49.919067,14.581194],[49.918526,14.581204],[49.918190,14.581225],
+  [49.917816,14.581311],[49.917290,14.581440],[49.916770,14.581634],
+  [49.915997,14.581881],[49.915195,14.582116],[49.913900,14.582567],
+  [49.913464,14.582664],[49.913020,14.582760],[49.912570,14.582803],
+  [49.912086,14.582770],[49.911633,14.582835],[49.911190,14.583028],
+  [49.910915,14.583350],[49.910680,14.583651],[49.910404,14.584284],
+  [49.910057,14.585002],[49.909595,14.585731],[49.909214,14.586279],
+  [49.908600,14.587202],[49.908234,14.587663],[49.907784,14.588103],
+  [49.907223,14.588607],[49.906660,14.589068],[49.905968,14.589669],
+  [49.905330,14.590195],[49.904660,14.590785],[49.904260,14.591118],
+  [49.903850,14.591353],[49.903150,14.591676],[49.902460,14.591997],
+  [49.902090,14.592201],[49.901745,14.592567],[49.901386,14.593060],
+  [49.901115,14.593596],[49.900887,14.594100],[49.900610,14.594712],
+  [49.900253,14.595473],[49.900032,14.596139]
+];
+
+// ── KALIBRACE: páry (GPS, km) z 'gps vs km.gpx' ──
+var CALIB_POINTS = [
+  {lat:49.9348717, lng:14.5579467, km:0.000},  // ZÚ - Hlubočinka, križovatka Hlavní × Slunečná
+  {lat:49.926820, lng:14.568976, km:1.180},
+  {lat:49.923107, lng:14.575239, km:1.800},
+  {lat:49.919390, lng:14.581171, km:2.400},
+  {lat:49.913490, lng:14.582667, km:3.070},
+  {lat:49.910156, lng:14.584722, km:3.500},
+  {lat:49.905445, lng:14.590097, km:4.160},
+  {lat:49.901855, lng:14.592412, km:4.600},  // KÚ - Kamenice, ul. Benešovská
+];
+
+// ── STAVEBNÍ OBJEKTY (úseky podle staničení) ──
+var STAVEBNI_OBJEKTY = [
+  // SO 101 - intravilán (úseky)
+  {id:'SO 101.a', kmOd:0.186, kmDo:0.710, barva:'#3b82f6', label:'SO 101', short:'SO 101 — intravilán (km 0,186–0,710)'},
+  {id:'SO 101.b', kmOd:1.590, kmDo:2.350, barva:'#3b82f6', label:'SO 101', short:'SO 101 — intravilán (km 1,590–2,350)'},
+  {id:'SO 101.c', kmOd:2.460, kmDo:3.030, barva:'#3b82f6', label:'SO 101', short:'SO 101 — intravilán (km 2,460–3,030)'},
+  {id:'SO 101.d', kmOd:3.100, kmDo:3.376, barva:'#3b82f6', label:'SO 101', short:'SO 101 — intravilán (km 3,100–3,376)'},
+  {id:'SO 101.e', kmOd:3.546, kmDo:4.391, barva:'#3b82f6', label:'SO 101', short:'SO 101 — intravilán (km 3,546–4,391)'},
+  {id:'SO 101.1', kmOd:2.721, kmDo:2.797, barva:'#22c55e', label:'SO 101.1', short:'SO 101.1 — chodník (km 2,721–2,797)'},
+  {id:'SO 101.2', kmOd:4.130, kmDo:4.180, barva:'#84cc16', label:'SO 101.2', short:'SO 101.2 — ozelenění Ringhofferova (km 4,130–4,180)'},
+  {id:'SO 101.3', kmOd:0.000, kmDo:0.186, barva:'#a78bfa', label:'SO 101.3', short:'SO 101.3 — oprava povrchu (km 0,000–0,186)'},
+  {id:'SO 101.4', kmOd:2.471, kmDo:2.509, barva:'#c084fc', label:'SO 101.4', short:'SO 101.4 — komplexní oprava (km 2,471–2,509)'},
+  {id:'SO 102.a', kmOd:0.710, kmDo:1.090, barva:'#0ea5e9', label:'SO 102', short:'SO 102 — extravilán (km 0,710–1,090)'},
+  {id:'SO 102.b', kmOd:1.300, kmDo:1.590, barva:'#0ea5e9', label:'SO 102', short:'SO 102 — extravilán (km 1,300–1,590)'},
+  {id:'SO 103',   kmOd:1.090, kmDo:1.300, barva:'#f59e0b', label:'SO 103', short:'SO 103 — okružní křižovatka (km 1,090–1,300)'},
+  {id:'SO 104',   kmOd:2.350, kmDo:2.460, barva:'#ef4444', label:'SO 104', short:'SO 104 — propustek 1 (km 2,350–2,460)'},
+  {id:'SO 105',   kmOd:3.030, kmDo:3.100, barva:'#ef4444', label:'SO 105', short:'SO 105 — propustek 2 (km 3,030–3,100)'},
+  {id:'SO 106',   kmOd:3.376, kmDo:3.546, barva:'#ec4899', label:'SO 106', short:'SO 106 — Nová Hospoda (km 3,376–3,546)'},
+  {id:'SO 107',   kmOd:4.391, kmDo:4.605, barva:'#14b8a6', label:'SO 107', short:'SO 107 — zpomalovací ostrůvek (km 4,391–4,605)'},
+];
+
+// ── PROPUSTKY (jen body, bez výkresů) ──
+var PROPUSTKY = [
+  {id:'P1', km:2.40491, nazev:'Propustek P1 — km 2,405 (SO 104)'},
+  {id:'P2', km:3.07132, nazev:'Propustek P2 — km 3,071 (SO 105)'},
+];
+
+// ──────────────────────────────────────────────────────────
+//  STAV
+// ──────────────────────────────────────────────────────────
+var map;
+var baseLayers = {};
+var currentBasemap = 'osm';
+var gpsWatcher = null, gpsMarker = null, gpsActive = false, gpsCentering = false;
+var gpxCumulative = [];
+var calibSorted = null;
+var layerGroups = { trasa:null, st:null, so:null, propustky:null };
+
+// ──────────────────────────────────────────────────────────
+//  GEOMETRIE: GPS ↔ km
+// ──────────────────────────────────────────────────────────
+function haversine(lat1,lon1,lat2,lon2) {
+  var R=6371000, p1=lat1*Math.PI/180, p2=lat2*Math.PI/180;
+  var dp=(lat2-lat1)*Math.PI/180, dl=(lon2-lon1)*Math.PI/180;
+  var a=Math.sin(dp/2)*Math.sin(dp/2)+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)*Math.sin(dl/2);
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function buildCumulative() {
+  gpxCumulative=[0];
+  for(var i=1;i<GPX_POINTS.length;i++)
+    gpxCumulative.push(gpxCumulative[i-1]+haversine(GPX_POINTS[i-1][0],GPX_POINTS[i-1][1],GPX_POINTS[i][0],GPX_POINTS[i][1]));
+}
+
+function nearestOnRoute(lat,lng) {
+  var minD=Infinity, bestCum=0;
+  var cosLat=Math.cos(lat*Math.PI/180);
+  for(var i=0;i<GPX_POINTS.length-1;i++){
+    var ax=GPX_POINTS[i][0], ay=GPX_POINTS[i][1];
+    var bx=GPX_POINTS[i+1][0], by=GPX_POINTS[i+1][1];
+    var dlat=bx-ax, dlng=(by-ay)*cosLat;
+    var clat=lat-ax, clng=(lng-ay)*cosLat;
+    var lenSq=dlat*dlat+dlng*dlng;
+    var t=lenSq>0?Math.max(0,Math.min(1,(clat*dlat+clng*dlng)/lenSq)):0;
+    var px=ax+t*(bx-ax), py=ay+t*(by-ay);
+    var d=haversine(lat,lng,px,py);
+    if(d<minD){
+      minD=d;
+      bestCum=gpxCumulative[i]+t*(gpxCumulative[i+1]-gpxCumulative[i]);
+    }
+  }
+  return {cum:bestCum,dist:minD};
+}
+
+function buildCalibSorted() {
+  calibSorted = CALIB_POINTS.map(function(cp){
+    var n = nearestOnRoute(cp.lat, cp.lng);
+    return {gpxM: n.cum, realKm: cp.km};
+  }).sort(function(a,b){ return a.realKm - b.realKm; });
+}
+
+function interp(arr,xKey,yKey,x) {
+  var s=arr;
+  if(x<=s[0][xKey]){var sl=(s[1][yKey]-s[0][yKey])/(s[1][xKey]-s[0][xKey]);return s[0][yKey]+sl*(x-s[0][xKey]);}
+  if(x>=s[s.length-1][xKey]){var n=s.length-1,sl2=(s[n][yKey]-s[n-1][yKey])/(s[n][xKey]-s[n-1][xKey]);return s[n][yKey]+sl2*(x-s[n][xKey]);}
+  for(var j=0;j<s.length-1;j++){
+    if(x>=s[j][xKey]&&x<=s[j+1][xKey]){
+      var t=(x-s[j][xKey])/(s[j+1][xKey]-s[j][xKey]);
+      return s[j][yKey]+t*(s[j+1][yKey]-s[j][yKey]);
+    }
+  }
+  return s[0][yKey];
+}
+
+function realKmToLatLng(realKm) {
+  var gpxM = interp(calibSorted,'realKm','gpxM',realKm);
+  for(var i=0;i<gpxCumulative.length-1;i++){
+    if(gpxM>=gpxCumulative[i]&&gpxM<=gpxCumulative[i+1]){
+      var seg=gpxCumulative[i+1]-gpxCumulative[i];
+      var frac=seg>0?(gpxM-gpxCumulative[i])/seg:0;
+      return [GPX_POINTS[i][0]+frac*(GPX_POINTS[i+1][0]-GPX_POINTS[i][0]),
+              GPX_POINTS[i][1]+frac*(GPX_POINTS[i+1][1]-GPX_POINTS[i][1])];
+    }
+  }
+  return null;
+}
+
+function gpxCumToRealKm(gpxM) { return interp(calibSorted,'gpxM','realKm',gpxM); }
+
+function segBearing(lat1,lon1,lat2,lon2) {
+  var p1=lat1*Math.PI/180, p2=lat2*Math.PI/180;
+  var dl=(lon2-lon1)*Math.PI/180;
+  var x=Math.sin(dl)*Math.cos(p2);
+  var y=Math.cos(p1)*Math.sin(p2)-Math.sin(p1)*Math.cos(p2)*Math.cos(dl);
+  return (Math.atan2(x,y)*180/Math.PI+360)%360;
+}
+
+function bearingAtGpxM(gpxM) {
+  for(var i=0;i<gpxCumulative.length-1;i++){
+    if(gpxM>=gpxCumulative[i]&&gpxM<=gpxCumulative[i+1]){
+      return segBearing(GPX_POINTS[i][0],GPX_POINTS[i][1],GPX_POINTS[i+1][0],GPX_POINTS[i+1][1]);
+    }
+  }
+  var n=GPX_POINTS.length-1;
+  return segBearing(GPX_POINTS[n-1][0],GPX_POINTS[n-1][1],GPX_POINTS[n][0],GPX_POINTS[n][1]);
+}
+
+function fmtKm(km) {
+  var w=Math.floor(km), f=Math.round((km-w)*1000);
+  if(f===1000){w++;f=0;}
+  return w+'+'+String(f).padStart(3,'0');
+}
+
+function findSOForKm(km) {
+  // Vrátí pole všech SO úseků, do kterých km spadá
+  return STAVEBNI_OBJEKTY.filter(function(so){
+    return km >= so.kmOd - 0.0001 && km <= so.kmDo + 0.0001;
+  });
+}
+
+function showToast(msg, dur) {
+  var t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  clearTimeout(t._tmr);
+  t._tmr = setTimeout(function(){t.classList.remove('show');}, dur||2500);
+}
+
+// ──────────────────────────────────────────────────────────
+//  MAPA
+// ──────────────────────────────────────────────────────────
+function initMap() {
+  map = L.map('map',{center:[49.917,14.580], zoom:14, maxZoom:20, zoomControl:true});
+
+  var mUrl = function(type){
+    return 'https://api.mapy.cz/v1/maptiles/'+type+'/256/{z}/{x}/{y}?apikey='+MAPY_API_KEY;
+  };
+  baseLayers.outdoor = L.tileLayer(mUrl('outdoor'),{maxZoom:20,maxNativeZoom:20,attribution:'© Mapy.cz'});
+  baseLayers.basic   = L.tileLayer(mUrl('basic'),  {maxZoom:20,maxNativeZoom:20,attribution:'© Mapy.cz'});
+  baseLayers.aerial  = L.tileLayer(mUrl('aerial'), {maxZoom:20,maxNativeZoom:20,attribution:'© Mapy.cz'});
+  baseLayers.osm     = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    {maxZoom:19,maxNativeZoom:19,attribution:'© OpenStreetMap'});
+
+  baseLayers.osm.addTo(map);
+  currentBasemap = 'osm';
+
+  map.on('dragstart', function(){ gpsCentering=false; });
+  map.on('click', function(){ closeLayersPanel(); });
+}
+
+function switchBasemap(name) {
+  if(!baseLayers[name] || name===currentBasemap) return;
+  map.removeLayer(baseLayers[currentBasemap]);
+  baseLayers[name].addTo(map);
+  currentBasemap = name;
+  document.querySelectorAll('.bm-btn').forEach(function(b){
+    b.classList.toggle('active', b.dataset.bm===name);
+  });
+}
+
+// ──────────────────────────────────────────────────────────
+//  TRASA (osa)
+// ──────────────────────────────────────────────────────────
+function buildRoute() {
+  layerGroups.trasa = L.layerGroup().addTo(map);
+  var ll = GPX_POINTS.map(function(p){return[p[0],p[1]];});
+  L.polyline(ll,{color:'#000',weight:8,opacity:0.25,interactive:false}).addTo(layerGroups.trasa);
+  L.polyline(ll,{color:'#e94560',weight:3,opacity:0.9,interactive:false,dashArray:'8 5'}).addTo(layerGroups.trasa);
+
+  var startPos = realKmToLatLng(KM_START);
+  var endPos   = realKmToLatLng(KM_END);
+  var mkS = L.divIcon({className:'',iconAnchor:[0,10],
+    html:'<div style="background:#48bb78;color:#000;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5);white-space:nowrap;">▶ km '+fmtKm(KM_START)+' · ZÚ</div>'});
+  var mkE = L.divIcon({className:'',iconAnchor:[0,10],
+    html:'<div style="background:#e94560;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.5);white-space:nowrap;">⏹ km '+fmtKm(KM_END)+' · KÚ</div>'});
+  if(startPos) L.marker(startPos,{icon:mkS,interactive:false}).addTo(layerGroups.trasa);
+  if(endPos)   L.marker(endPos,  {icon:mkE,interactive:false}).addTo(layerGroups.trasa);
+}
+
+// ──────────────────────────────────────────────────────────
+//  STANIČENÍ (po 100 m, jen popisek + krátká čárka)
+// ──────────────────────────────────────────────────────────
+function buildStaniceni() {
+  layerGroups.st = L.layerGroup().addTo(map);
+  var stepKm = 0.100;
+  var realKm = Math.round(Math.ceil(KM_START/stepKm)*stepKm*10000)/10000;
+  while(realKm <= KM_END + 0.0001) {
+    var pos = realKmToLatLng(realKm);
+    if(pos) {
+      var gpxM = interp(calibSorted,'realKm','gpxM',realKm);
+      var bear = bearingAtGpxM(gpxM);
+      addStaniceniMarker(layerGroups.st, pos[0], pos[1], realKm, bear);
+    }
+    realKm = Math.round((realKm + stepKm)*10000)/10000;
+  }
+}
+
+function addStaniceniMarker(group, lat, lng, realKm, bear) {
+  var label = fmtKm(realKm);
+  var tickRot = (bear + 90) % 360;
+  var C = 50, cc = C/2;
+  var tickSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="'+C+'" height="'+C+'" style="overflow:visible;display:block;">' +
+    '<g transform="rotate('+tickRot.toFixed(1)+' '+cc+' '+cc+')">' +
+      '<line x1="'+cc+'" y1="'+(cc-18)+'" x2="'+cc+'" y2="'+(cc+18)+'" stroke="#f5a623" stroke-width="3" stroke-linecap="round"/>' +
+    '</g></svg>';
+  var tickIcon = L.divIcon({className:'', html:tickSvg, iconSize:[C,C], iconAnchor:[cc,cc]});
+  L.marker([lat,lng],{icon:tickIcon, interactive:false, zIndexOffset:-10}).addTo(group);
+
+  // Text vlevo od osy
+  var perpRad = (bear - 90) * Math.PI / 180;
+  var offset = 50;
+  var dx = Math.sin(perpRad) * offset;
+  var dy = -Math.cos(perpRad) * offset;
+  var DW = 180, DH = 36;
+  var ancX = Math.round(DW + dx);
+  var ancY = Math.round(DH/2 + dy);
+
+  var textHtml =
+    '<div style="width:'+DW+'px;height:'+DH+'px;display:flex;align-items:center;justify-content:flex-end;'+
+    'pointer-events:all;cursor:pointer;">' +
+    '<span class="st-label">'+label+'</span></div>';
+  var textIcon = L.divIcon({className:'staniceni', html:textHtml, iconSize:[DW,DH], iconAnchor:[ancX,ancY]});
+  var m = L.marker([lat,lng],{icon:textIcon, interactive:true});
+  (function(km){
+    m.on('click', function(e) {
+      L.DomEvent.stopPropagation(e);
+      onStaniceniClick(km, lat, lng);
+    });
+  })(realKm);
+  m.addTo(group);
+}
+
+function onStaniceniClick(realKm, lat, lng) {
+  var sos = findSOForKm(realKm);
+  var soHtml;
+  if(sos.length === 0) {
+    soHtml = '<span style="color:var(--text2)">Mimo definované úseky SO</span>';
+  } else {
+    soHtml = sos.map(function(so){
+      return '<div style="margin:3px 0;"><span style="display:inline-block;width:12px;height:12px;background:'+so.barva+';border-radius:3px;vertical-align:middle;margin-right:6px;"></span>'+so.short+'</div>';
+    }).join('');
+  }
+  var html =
+    '<div style="font-size:14px;"><b>Staničení km '+fmtKm(realKm)+'</b></div>' +
+    '<div style="margin-top:8px;font-size:12px;">'+soHtml+'</div>';
+  L.popup({maxWidth:280, className:'so-popup'})
+    .setLatLng([lat,lng])
+    .setContent(html)
+    .openOn(map);
+}
+
+// ──────────────────────────────────────────────────────────
+//  STAVEBNÍ OBJEKTY (barevné úseky podél osy)
+// ──────────────────────────────────────────────────────────
+function buildSO() {
+  layerGroups.so = L.layerGroup().addTo(map);
+  var soOffset = 18;  // metry od osy
+
+  STAVEBNI_OBJEKTY.forEach(function(so) {
+    var pts = [];
+    var bearList = [];
+    var km = so.kmOd;
+    while(km <= so.kmDo + 0.001) {
+      var pos = realKmToLatLng(km);
+      if(pos) {
+        var gpxM = interp(calibSorted,'realKm','gpxM',km);
+        var bear = bearingAtGpxM(gpxM);
+        var perpRad = (bear - 90) * Math.PI / 180;
+        var off = soOffset / 6371000;
+        var lat = pos[0] + off*(180/Math.PI)*Math.cos(perpRad);
+        var lng = pos[1] + off*(180/Math.PI)*Math.sin(perpRad)/Math.cos(pos[0]*Math.PI/180);
+        pts.push([lat,lng]);
+        bearList.push(bear);
+      }
+      km = Math.round((km + 0.020)*1000)/1000;
+    }
+    if(pts.length < 2) return;
+
+    var line = L.polyline(pts, {color:so.barva, weight:8, opacity:0.6});
+    line.bindPopup(
+      '<b>'+so.id+'</b><br>km <b>'+fmtKm(so.kmOd)+' – '+fmtKm(so.kmDo)+'</b><br>'+
+      '<span style="color:var(--text2);font-size:12px;">'+so.short+'</span>',
+      {maxWidth:260}
+    );
+    line.addTo(layerGroups.so);
+
+    // Popisek uprostřed úseku
+    var midIdx = Math.floor(pts.length/2);
+    var bearMid = bearList[midIdx];
+    var rot = bearMid; if(rot>90 && rot<270) rot = (rot+180)%360;
+    var perpRadM = (bearMid - 90) * Math.PI / 180;
+    var offExtra = 18 / 6371000;
+    var latL = pts[midIdx][0] + offExtra*(180/Math.PI)*Math.cos(perpRadM);
+    var lngL = pts[midIdx][1] + offExtra*(180/Math.PI)*Math.sin(perpRadM)/Math.cos(pts[midIdx][0]*Math.PI/180);
+    var lbl = L.divIcon({
+      className:'so-inline-label',
+      html:'<div style="color:'+so.barva+';font-size:13px;font-weight:800;white-space:nowrap;'+
+           'text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000;'+
+           'transform:rotate('+(rot+90).toFixed(0)+'deg);transform-origin:0 50%;">'+
+           so.id+'</div>',
+      iconSize:[0,0], iconAnchor:[0,0],
+    });
+    L.marker([latL,lngL],{icon:lbl, interactive:false}).addTo(layerGroups.so);
+  });
+}
+
+// ──────────────────────────────────────────────────────────
+//  PROPUSTKY (jen body s tooltipem)
+// ──────────────────────────────────────────────────────────
+function buildPropustky() {
+  layerGroups.propustky = L.layerGroup().addTo(map);
+  PROPUSTKY.forEach(function(p) {
+    var pos = realKmToLatLng(p.km);
+    if(!pos) return;
+    var gpxM = interp(calibSorted,'realKm','gpxM', p.km);
+    var bear = bearingAtGpxM(gpxM);
+    var perpRad = (bear - 90) * Math.PI / 180;
+    var offset = 42;
+    var dx = Math.sin(perpRad) * offset;
+    var dy = -Math.cos(perpRad) * offset;
+    var DW = 60, DH = 38;
+    var ancX = Math.round(DW + dx);
+    var ancY = Math.round(DH/2 + dy);
+
+    var html = '<div style="width:'+DW+'px;height:'+DH+'px;display:flex;align-items:center;justify-content:flex-end;pointer-events:all;cursor:pointer;">'+
+      '<div class="prop-pin">'+p.id+'</div></div>';
+    var icon = L.divIcon({className:'prop-marker', html:html, iconSize:[DW,DH], iconAnchor:[ancX,ancY]});
+    var m = L.marker(pos, {icon:icon, interactive:true, zIndexOffset:200});
+    m.bindPopup(
+      '<b>'+p.nazev+'</b><br>'+
+      '<span style="color:var(--text2);font-size:12px;">staničení km '+fmtKm(p.km)+'</span>',
+      {maxWidth:260}
+    );
+    m.addTo(layerGroups.propustky);
+  });
+}
+
+// ──────────────────────────────────────────────────────────
+//  GPS
+// ──────────────────────────────────────────────────────────
+function toggleGPS(on) { on ? startGPS() : stopGPS(); }
+
+function startGPS() {
+  if(!navigator.geolocation) { showToast('GPS není k dispozici'); return; }
+  gpsActive = true; gpsCentering = true;
+  document.getElementById('btn-gps').classList.add('active');
+  document.getElementById('lyr-gps').checked = true;
+  gpsWatcher = navigator.geolocation.watchPosition(
+    function(pos){ updateGPS(pos.coords.latitude, pos.coords.longitude); },
+    function(err){ showToast('GPS chyba: ' + err.message); },
+    {enableHighAccuracy:true, maximumAge:2000, timeout:10000}
+  );
+}
+
+function stopGPS() {
+  gpsActive = false; gpsCentering = false;
+  document.getElementById('btn-gps').classList.remove('active');
+  document.getElementById('lyr-gps').checked = false;
+  if(gpsWatcher!==null){ navigator.geolocation.clearWatch(gpsWatcher); gpsWatcher = null; }
+  if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker = null; }
+  document.getElementById('km-display').textContent = 'km –';
+  document.getElementById('so-display').textContent = 'SO –';
+}
+
+function updateGPS(lat, lng) {
+  var icon = L.divIcon({className:'', html:'<div class="gps-wrap"><div class="gps-dot-inner"></div></div>', iconSize:[20,20], iconAnchor:[10,10]});
+  if(!gpsMarker) { gpsMarker = L.marker([lat,lng],{icon:icon, zIndexOffset:1000}).addTo(map); }
+  else { gpsMarker.setLatLng([lat,lng]); }
+
+  var n = nearestOnRoute(lat, lng);
+  var km = gpxCumToRealKm(n.cum);
+  document.getElementById('km-display').textContent = 'km ' + fmtKm(km);
+
+  // Aktuální SO podle km (a vzdálenosti od osy)
+  var soDisp = document.getElementById('so-display');
+  if(n.dist > 80) {
+    soDisp.textContent = 'mimo';
+    soDisp.style.color = 'var(--text2)';
+    soDisp.style.borderColor = 'var(--border)';
+  } else {
+    var sos = findSOForKm(km);
+    if(sos.length === 0) {
+      soDisp.textContent = '–';
+      soDisp.style.color = 'var(--text2)';
+      soDisp.style.borderColor = 'var(--border)';
+    } else {
+      soDisp.textContent = sos[0].id;
+      soDisp.style.color = sos[0].barva;
+      soDisp.style.borderColor = sos[0].barva;
+    }
+  }
+
+  if(gpsCentering) map.setView([lat,lng], map.getZoom());
+}
+
+function centerGPS() {
+  if(!gpsActive) { startGPS(); }
+  else { gpsCentering = true; if(gpsMarker) map.setView(gpsMarker.getLatLng(), 16); }
+}
+
+// ──────────────────────────────────────────────────────────
+//  UI: VRSTVY + LEGENDA + KLÁVESY
+// ──────────────────────────────────────────────────────────
+function toggleLayer(id, on) {
+  if(id==='lyr-gps')   return toggleGPS(on);
+  if(id==='lyr-trasa') return on ? map.addLayer(layerGroups.trasa)     : map.removeLayer(layerGroups.trasa);
+  if(id==='lyr-st')    return on ? map.addLayer(layerGroups.st)        : map.removeLayer(layerGroups.st);
+  if(id==='lyr-so')    return on ? map.addLayer(layerGroups.so)        : map.removeLayer(layerGroups.so);
+  if(id==='lyr-prop')  return on ? map.addLayer(layerGroups.propustky) : map.removeLayer(layerGroups.propustky);
+  if(id==='lyr-legend') return toggleLegend(on);
+}
+
+function buildLegend() {
+  var seen = {};
+  var rows = [];
+  STAVEBNI_OBJEKTY.forEach(function(so){
+    if(seen[so.label]) return;
+    seen[so.label] = true;
+    rows.push('<div class="lg-row"><div class="lg-sw" style="background:'+so.barva+'"></div><div class="lg-lbl">'+so.short.replace(/\s*\(km.*\)$/,'')+'</div></div>');
+  });
+  document.getElementById('legend-rows').innerHTML = rows.join('');
+}
+
+function toggleLegend(on) {
+  document.getElementById('legend').classList.toggle('open', on);
+  document.getElementById('btn-legend').style.display = on ? 'none' : 'flex';
+}
+
+function closeLayersPanel() {
+  document.getElementById('layers-panel').classList.remove('open');
+}
+
+// ──────────────────────────────────────────────────────────
+//  INIT
+// ──────────────────────────────────────────────────────────
+window.addEventListener('load', function() {
+  buildCumulative();
+  buildCalibSorted();
+  initMap();
+  buildRoute();
+  buildSO();
+  buildStaniceni();
+  buildPropustky();
+  buildLegend();
+
+  // Layers panel toggle
+  document.getElementById('btn-layers').onclick = function(e) {
+    e.stopPropagation();
+    document.getElementById('layers-panel').classList.toggle('open');
+  };
+  document.getElementById('layers-panel').onclick = function(e){ e.stopPropagation(); };
+
+  // Toggle slidery
+  document.querySelectorAll('.toggle-slider').forEach(function(s){
+    s.onclick = function(){
+      var id = s.dataset.for;
+      var cb = document.getElementById(id);
+      cb.checked = !cb.checked;
+      toggleLayer(id, cb.checked);
+    };
+  });
+
+  // Basemap přepínače
+  document.querySelectorAll('.bm-btn').forEach(function(b){
+    b.onclick = function(){ switchBasemap(b.dataset.bm); };
+  });
+
+  // GPS tlačítko
+  document.getElementById('btn-gps').onclick = centerGPS;
+
+  // Legenda - výchozí stav: zobrazená
+  toggleLegend(true);
+  document.getElementById('btn-legend').onclick = function(){ toggleLegend(true); };
+  document.getElementById('btn-legend-close').onclick = function(){
+    document.getElementById('lyr-legend').checked = false;
+    toggleLegend(false);
+  };
+
+  // Auto-fit: zobrazí celou trasu při startu
+  var bounds = L.latLngBounds(GPX_POINTS);
+  map.fitBounds(bounds, {padding:[40,40]});
+
+  showToast('TDS verze — klikni na km značku nebo SO úsek pro detail', 4000);
+});
+</script>
+</body>
+</html>
