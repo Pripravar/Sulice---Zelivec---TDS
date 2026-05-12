@@ -51,11 +51,13 @@ body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui
 
 /* ══ STANIČENÍ - jednoduchý popisek u trasy ══ */
 .staniceni { background:transparent !important; border:none !important; overflow:visible !important; }
-.st-wrap { display:flex; flex-direction:column; align-items:flex-end; cursor:pointer; user-select:none; }
 .st-label { color:#f5a623; font-size:22px; font-weight:900; white-space:nowrap; line-height:1;
   text-shadow:-2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 2px 2px 0 #000, 0 0 8px #000; transition:color .15s; }
-.st-line { width:2px; height:14px; background:#f5a623; margin-top:3px; flex-shrink:0; box-shadow:0 0 4px #000; }
 .st-wrap:hover .st-label { color:#ffd166; }
+/* 20 m staničení - menší, šedé */
+.st20-label { color:#bbb; font-size:14px; font-weight:700; white-space:nowrap; line-height:1;
+  text-shadow:-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; transition:color .15s; }
+.st20-wrap:hover .st20-label { color:#fff; }
 
 /* GPS marker */
 .gps-wrap { position:relative; width:18px; height:18px; }
@@ -135,6 +137,9 @@ body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui
   </div>
   <div class="layer-row"><label>📏 Staničení (po 100 m)</label>
     <div class="toggle"><input type="checkbox" id="lyr-st" checked><span class="toggle-slider" data-for="lyr-st"></span></div>
+  </div>
+  <div class="layer-row"><label>📐 Staničení (po 20 m)</label>
+    <div class="toggle"><input type="checkbox" id="lyr-st20"><span class="toggle-slider" data-for="lyr-st20"></span></div>
   </div>
   <div class="layer-row"><label>🏗️ Stavební objekty</label>
     <div class="toggle"><input type="checkbox" id="lyr-so" checked><span class="toggle-slider" data-for="lyr-so"></span></div>
@@ -241,7 +246,7 @@ var currentBasemap = 'osm';
 var gpsWatcher = null, gpsMarker = null, gpsActive = false, gpsCentering = false;
 var gpxCumulative = [];
 var calibSorted = null;
-var layerGroups = { trasa:null, st:null, so:null, propustky:null };
+var layerGroups = { trasa:null, st:null, st20:null, so:null, propustky:null };
 
 // ──────────────────────────────────────────────────────────
 //  GEOMETRIE: GPS ↔ km
@@ -404,48 +409,71 @@ function buildRoute() {
 }
 
 // ──────────────────────────────────────────────────────────
-//  STANIČENÍ (po 100 m, jen popisek + krátká čárka)
+//  STANIČENÍ (po 100 m primární, po 20 m doplňková vrstva)
 // ──────────────────────────────────────────────────────────
-function buildStaniceni() {
+function buildStaniceni100() {
   layerGroups.st = L.layerGroup().addTo(map);
-  var stepKm = 0.100;
+  addStaniceniMarkers(layerGroups.st, 0.100, true);
+}
+
+function buildStaniceni20() {
+  // Vytvořena ale nepřidána do mapy (uživatel ji zapne přepínačem)
+  layerGroups.st20 = L.layerGroup();
+  addStaniceniMarkers(layerGroups.st20, 0.020, false);
+}
+
+function addStaniceniMarkers(group, stepKm, is100) {
   var realKm = Math.round(Math.ceil(KM_START/stepKm)*stepKm*10000)/10000;
   while(realKm <= KM_END + 0.0001) {
-    var pos = realKmToLatLng(realKm);
-    if(pos) {
-      var gpxM = interp(calibSorted,'realKm','gpxM',realKm);
-      var bear = bearingAtGpxM(gpxM);
-      addStaniceniMarker(layerGroups.st, pos[0], pos[1], realKm, bear);
+    // U 20 m vrstvy přeskočit pozice, které jsou násobkem 100 m (tam je velký 100m popisek)
+    var skip = false;
+    if(!is100) {
+      var mod = Math.round(realKm * 1000) % 100;
+      if(mod === 0) skip = true;
+    }
+    if(!skip) {
+      var pos = realKmToLatLng(realKm);
+      if(pos) {
+        var gpxM = interp(calibSorted,'realKm','gpxM',realKm);
+        var bear = bearingAtGpxM(gpxM);
+        addStaniceniMarker(group, pos[0], pos[1], realKm, bear, is100);
+      }
     }
     realKm = Math.round((realKm + stepKm)*10000)/10000;
   }
 }
 
-function addStaniceniMarker(group, lat, lng, realKm, bear) {
-  var label = fmtKm(realKm);
+function addStaniceniMarker(group, lat, lng, realKm, bear, is100) {
+  var label    = fmtKm(realKm);
+  var tickLen  = is100 ? 18 : 8;
+  var tickW    = is100 ? 3  : 1.5;
+  var color    = is100 ? '#f5a623' : '#bbb';
+  var offset   = is100 ? 50 : 32;
+  var textCls  = is100 ? 'st-label' : 'st20-label';
+  var wrapCls  = is100 ? 'st-wrap'  : 'st20-wrap';
+
   var tickRot = (bear + 90) % 360;
   var C = 50, cc = C/2;
   var tickSvg =
     '<svg xmlns="http://www.w3.org/2000/svg" width="'+C+'" height="'+C+'" style="overflow:visible;display:block;">' +
     '<g transform="rotate('+tickRot.toFixed(1)+' '+cc+' '+cc+')">' +
-      '<line x1="'+cc+'" y1="'+(cc-18)+'" x2="'+cc+'" y2="'+(cc+18)+'" stroke="#f5a623" stroke-width="3" stroke-linecap="round"/>' +
+      '<line x1="'+cc+'" y1="'+(cc-tickLen)+'" x2="'+cc+'" y2="'+(cc+tickLen)+'" stroke="'+color+'" stroke-width="'+tickW+'" stroke-linecap="round"/>' +
     '</g></svg>';
   var tickIcon = L.divIcon({className:'', html:tickSvg, iconSize:[C,C], iconAnchor:[cc,cc]});
   L.marker([lat,lng],{icon:tickIcon, interactive:false, zIndexOffset:-10}).addTo(group);
 
   // Text vlevo od osy
   var perpRad = (bear - 90) * Math.PI / 180;
-  var offset = 50;
   var dx = Math.sin(perpRad) * offset;
   var dy = -Math.cos(perpRad) * offset;
-  var DW = 180, DH = 36;
+  var DW = 180, DH = is100 ? 36 : 26;
   var ancX = Math.round(DW + dx);
   var ancY = Math.round(DH/2 + dy);
 
   var textHtml =
-    '<div style="width:'+DW+'px;height:'+DH+'px;display:flex;align-items:center;justify-content:flex-end;'+
+    '<div class="'+wrapCls+'" style="width:'+DW+'px;height:'+DH+'px;display:flex;align-items:center;justify-content:flex-end;'+
     'pointer-events:all;cursor:pointer;">' +
-    '<span class="st-label">'+label+'</span></div>';
+    '<span class="'+textCls+'">'+label+'</span></div>';
   var textIcon = L.divIcon({className:'staniceni', html:textHtml, iconSize:[DW,DH], iconAnchor:[ancX,ancY]});
   var m = L.marker([lat,lng],{icon:textIcon, interactive:true});
   (function(km){
@@ -632,6 +660,7 @@ function toggleLayer(id, on) {
   if(id==='lyr-gps')   return toggleGPS(on);
   if(id==='lyr-trasa') return on ? map.addLayer(layerGroups.trasa)     : map.removeLayer(layerGroups.trasa);
   if(id==='lyr-st')    return on ? map.addLayer(layerGroups.st)        : map.removeLayer(layerGroups.st);
+  if(id==='lyr-st20')  return on ? map.addLayer(layerGroups.st20)      : map.removeLayer(layerGroups.st20);
   if(id==='lyr-so')    return on ? map.addLayer(layerGroups.so)        : map.removeLayer(layerGroups.so);
   if(id==='lyr-prop')  return on ? map.addLayer(layerGroups.propustky) : map.removeLayer(layerGroups.propustky);
   if(id==='lyr-legend') return toggleLegend(on);
@@ -666,7 +695,8 @@ window.addEventListener('load', function() {
   initMap();
   buildRoute();
   buildSO();
-  buildStaniceni();
+  buildStaniceni100();
+  buildStaniceni20();
   buildPropustky();
   buildLegend();
 
