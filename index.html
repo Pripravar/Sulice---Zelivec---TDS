@@ -761,15 +761,37 @@ function renderTdsFoto(){
     box.innerHTML = '';
     arr.forEach(function(it){
       if(!it.soubor) return;
-      var cell = document.createElement('div'); cell.style.cssText = 'position:relative;aspect-ratio:1;cursor:pointer;';
-      var img = document.createElement('img'); img.loading='lazy'; img.src = it.soubor; img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:6px;background:var(--panel2);display:block;';
-      var meta = document.createElement('div'); meta.style.cssText = 'position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.62);color:#fff;font-size:9px;padding:2px 4px;border-radius:0 0 6px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      var cell = document.createElement('div'); cell.style.cssText = 'position:relative;aspect-ratio:1;';
+      var img = document.createElement('img'); img.loading='lazy'; img.src = it.soubor; img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:6px;background:var(--panel2);display:block;cursor:zoom-in;';
+      img.onclick = function(){ openTdsPreview(it.soubor); };   // náhled v aplikaci (ne nové okno)
+      var meta = document.createElement('div'); meta.style.cssText = 'position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.62);color:#fff;font-size:9px;padding:2px 4px;border-radius:0 0 6px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;';
       meta.textContent = [it.so, it.km ? ('km '+it.km) : '', it.date].filter(Boolean).join(' · ');
-      cell.appendChild(img); cell.appendChild(meta);
-      cell.onclick = function(){ window.open(it.soubor,'_blank','noopener'); };
+      var del = document.createElement('button'); del.textContent = '🗑'; del.title = 'Smazat';
+      del.style.cssText = 'position:absolute;top:4px;right:4px;background:rgba(229,57,53,.92);color:#fff;border:none;border-radius:8px;width:30px;height:30px;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+      del.onclick = function(e){ e.stopPropagation(); deleteTdsFoto(it._k); };
+      cell.appendChild(img); cell.appendChild(meta); cell.appendChild(del);
       box.appendChild(cell);
     });
   }).catch(function(e){ box.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#e57373;padding:24px;">Chyba načtení fotek: '+((e&&e.message)||'')+'</div>'; });
+}
+function deleteTdsFoto(key){
+  if(!key || !tdb) return;
+  if(!confirm('Smazat tuhle fotku z TDS?')) return;
+  tdb.ref('tds_fotky/'+key).remove()
+    .then(function(){ renderTdsFoto(); })
+    .catch(function(e){ showToast('Chyba mazání: '+((e&&e.message)||'')); });
+}
+function openTdsPreview(url){
+  var ov = document.getElementById('tds-preview');
+  if(!ov){
+    ov = document.createElement('div'); ov.id='tds-preview';
+    ov.style.cssText='position:fixed;inset:0;z-index:3200;background:rgba(0,0,0,.95);display:flex;align-items:center;justify-content:center;cursor:zoom-out;';
+    ov.onclick=function(){ ov.style.display='none'; };
+    var im=document.createElement('img'); im.id='tds-preview-img'; im.style.cssText='max-width:100%;max-height:100%;object-fit:contain;';
+    ov.appendChild(im); document.body.appendChild(ov);
+  }
+  document.getElementById('tds-preview-img').src = url;
+  ov.style.display='flex';
 }
 
 window.addEventListener('load', function() {
