@@ -6,6 +6,11 @@
 <title>II/603 Sulice – Želivec · TDS / objednatel</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Firebase (sdílený projekt s hlavní appkou) – jen pro fotodokumentaci od zhotovitele -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 :root {
@@ -115,10 +120,22 @@ body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui
   <h1>II/603 Sulice – <span>Želivec</span><small>TDS / objednatel · rekonstrukce silnice a mostů</small></h1>
   <div id="so-display" title="Aktuální stavební objekt">SO –</div>
   <div id="km-display" title="Aktuální staničení">km –</div>
+  <button id="btn-tds-foto" style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:6px 10px;font-size:13px;cursor:pointer;white-space:nowrap;">🖼️ Foto</button>
   <button id="btn-layers">☰ Vrstvy</button>
 </div>
 
 <div id="map"></div>
+
+<!-- Fotodokumentace od zhotovitele (čte /tds_fotky, jen pro přihlášené) -->
+<div id="tds-foto-modal" style="display:none;position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:12px;">
+  <div style="background:var(--panel);border-radius:14px;max-width:660px;width:100%;max-height:90vh;display:flex;flex-direction:column;border:1px solid var(--border);">
+    <div style="display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div style="flex:1;font-size:15px;font-weight:700;color:var(--accent);">🖼️ Fotodokumentace od zhotovitele</div>
+      <button onclick="closeTdsFoto()" style="background:none;border:none;color:var(--text2);font-size:22px;cursor:pointer;min-width:44px;min-height:44px;">✕</button>
+    </div>
+    <div id="tds-foto-list" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:12px;overflow-y:auto;"></div>
+  </div>
+</div>
 
 <div id="layers-panel">
   <h3>Podkladová mapa</h3>
@@ -689,7 +706,68 @@ function closeLayersPanel() {
 // ──────────────────────────────────────────────────────────
 //  INIT
 // ──────────────────────────────────────────────────────────
+// ─────────── Fotodokumentace od zhotovitele (Firebase, jen pro přihlášené) ───────────
+var TDS_FB = {
+  apiKey:'AIzaSyAKkflwExg61LvgXAWWihHRXC-TJDWsiMo',
+  authDomain:'sulice-zelivec.firebaseapp.com',
+  databaseURL:'https://sulice-zelivec-default-rtdb.europe-west1.firebasedatabase.app',
+  projectId:'sulice-zelivec',
+  storageBucket:'sulice-zelivec.firebasestorage.app',
+  messagingSenderId:'275319910276',
+  appId:'1:275319910276:web:d5e95b64f65aa5fb2637d1'
+};
+var tdb=null, tauth=null, tdsUser=null, _tdsUrlCache={};
+try {
+  firebase.initializeApp(TDS_FB);
+  tdb = firebase.database();
+  tauth = firebase.auth();
+  tauth.getRedirectResult().catch(function(){});
+  tauth.onAuthStateChanged(function(u){
+    tdsUser = u;
+    var m = document.getElementById('tds-foto-modal');
+    if(u && m && m.style.display === 'flex') renderTdsFoto();
+  });
+} catch(e){ console.warn('TDS Firebase init:', e); }
+function tdsResolve(path){
+  if(!path) return Promise.reject(new Error('no path'));
+  if(/^https?:\/\//.test(path)) return Promise.resolve(path);   // legacy plná URL
+  if(_tdsUrlCache[path]) return Promise.resolve(_tdsUrlCache[path]);
+  return firebase.app().storage('gs://sulice-zelivec-eu').ref(path).getDownloadURL().then(function(u){ _tdsUrlCache[path]=u; return u; });
+}
+function tdsLogin(){
+  if(!tauth) return;
+  var p = new firebase.auth.GoogleAuthProvider();
+  tauth.signInWithPopup(p).catch(function(){ try { tauth.signInWithRedirect(p); } catch(e){} });
+}
+function openTdsFoto(){
+  if(!tauth){ showToast('Fotky nejsou dostupné'); return; }
+  if(!tdsUser){ showToast('Pro zobrazení fotek se přihlas Googlem', 2600); tdsLogin(); return; }
+  document.getElementById('tds-foto-modal').style.display = 'flex';
+  renderTdsFoto();
+}
+function closeTdsFoto(){ document.getElementById('tds-foto-modal').style.display = 'none'; }
+function renderTdsFoto(){
+  var box = document.getElementById('tds-foto-list'); if(!box || !tdb) return;
+  box.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text2);padding:24px;">Načítám…</div>';
+  tdb.ref('tds_fotky').orderByChild('ts').once('value').then(function(snap){
+    var arr=[]; snap.forEach(function(ch){ var v=ch.val()||{}; v._k=ch.key; arr.push(v); }); arr.reverse();
+    if(!arr.length){ box.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text2);padding:30px;">Zatím žádné fotky od zhotovitele.</div>'; return; }
+    box.innerHTML = '';
+    arr.forEach(function(it){
+      var cell = document.createElement('div'); cell.style.cssText = 'position:relative;aspect-ratio:1;cursor:pointer;';
+      var img = document.createElement('img'); img.loading='lazy'; img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:6px;background:var(--panel2);display:block;';
+      tdsResolve(it.soubor).then(function(u){ img.src=u; }).catch(function(){});
+      var meta = document.createElement('div'); meta.style.cssText = 'position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.62);color:#fff;font-size:9px;padding:2px 4px;border-radius:0 0 6px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      meta.textContent = [it.so, it.km ? ('km '+it.km) : '', it.date].filter(Boolean).join(' · ');
+      cell.appendChild(img); cell.appendChild(meta);
+      cell.onclick = function(){ tdsResolve(it.soubor).then(function(u){ window.open(u,'_blank','noopener'); }); };
+      box.appendChild(cell);
+    });
+  }).catch(function(e){ box.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#e57373;padding:24px;">Chyba načtení fotek: '+((e&&e.message)||'')+'</div>'; });
+}
+
 window.addEventListener('load', function() {
+  var _fb = document.getElementById('btn-tds-foto'); if(_fb) _fb.onclick = openTdsFoto;
   buildCumulative();
   buildCalibSorted();
   initMap();
